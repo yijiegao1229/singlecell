@@ -1,0 +1,1254 @@
+#!/usr/bin/python3
+# -*-coding:utf-8-*-
+import fire
+# import pymysql
+from ast import literal_eval
+from collections import defaultdict
+import re
+import logging
+import codecs
+import os,sys,argparse,glob
+import sys
+import time
+import shlex
+import datetime
+VERSION="v1.0"
+AUTHORS="gaoyj"
+SCRIPTDIR, SCRIPTNAME = os.path.split(os.path.abspath(sys.argv[0]))
+sys.path.insert(1,SCRIPTDIR)
+from mybase import *
+DESCRIPTION=""
+
+logging.basicConfig(level=logging.DEBUG,format='%(asctime)s - %(filename)s - %(levelname)s: %(message)s')
+USAGE = "python %s --input ./BMK230208-BG588-ZX01-0301 --output ./  " %(SCRIPTNAME)
+def arg_parse():
+    parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,description=DESCRIPTION,epilog="The End",add_help=False)
+    #parser.add_argument("-f","--cfg", dest = "mycfg", help="detail.cfg ",)
+    parser.add_argument("-o", "--output",dest = "OutputDir", help="outputs dir ", default = "./")
+    parser.add_argument("-i", "--input",dest = "Input_Dir", help="yz input  dir ,contain StatDir dir ")
+    #parser.add_argument("-m", "--maillist",dest = "mail", help="manager_email ,for example, gaoyj", type = str , required = True)
+    parser.add_argument("-s", "--step",dest = "Step", help="s1:准备data.cfg和StatDir 目录 ；s2：检查输入目录;s3: run yapi", type = str , default = "2,3")
+    parser.add_argument("-h", "--help", help = USAGE, action = "help")
+    args = parser.parse_args()
+    return args
+
+class singlecell_pipline():
+    def __init__(self,args,):
+        #命令行参数
+        self.args = args
+        self.input = args.Input_Dir
+        self.outdir = os.path.abspath(args.OutputDir)
+        self.steps = args.Step
+        self.cfgdict = readCfg(os.path.join(self.input,"mydetail.cfg"))
+        self.sample_list,self.fq1_list,self.fq2_list = readData2(os.path.join(self.input,"samples_name.cfg"))
+        self.Group_info_stat = " ".join(glob.glob(os.path.join(self.outdir, f"creat_detail_cfg_*/output/Group_info.stat")))
+        self.groupdict = readCfg(self.Group_info_stat)
+        self.group_list = list(self.groupdict.keys())
+        self.group_value = list(self.groupdict.values())
+        #cfg参数
+        self.Project_name = self.cfgdict["Project_name"]
+        self.Project_id = self.cfgdict["Project_id"]
+        self.Species = self.cfgdict["Species"]
+        self.Genome_version = self.cfgdict["Genome_version"]
+        self.refData = self.cfgdict["refData"]
+        self.cellranger_version = self.cfgdict["cellranger_version"]
+        self.Com = self.cfgdict["Com"]
+        self.step = self.cfgdict["step"]
+        self.minUMI = self.cfgdict["minUMI"]
+        self.minGene = self.cfgdict["minGene"]
+        self.maxGene = self.cfgdict["maxGene"]
+        self.fold = self.cfgdict["fold"]
+        self.Thred = self.cfgdict["Thred"]
+        self.mincell = self.cfgdict["mincell"]
+        self.maxpct = self.cfgdict["maxpct"]
+        self.cellNumb = self.cfgdict["cellNumb"]
+        self.minexp = self.cfgdict["minexp"]
+        self.resolution = self.cfgdict["resolution"]
+        self.nucleus = self.cfgdict["nucleus"]
+        self.SCT = self.cfgdict["SCT"]
+
+
+    def creat_detail_cfg(self):
+
+        if  glob.glob(os.path.join(self.outdir, "creat_detail_cfg*/exe-shell.sh.done")):
+            print("发现 creat_detail_cfg*/exe-shell.sh.done，当前步骤运行完成，跳过进行下一步。")
+            return
+        else:
+            print(f"开始分析creat_detail_cfg")
+            timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+            outdir = os.path.join(self.outdir, f"creat_detail_cfg_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+
+            cmd = [
+                "creat_detail_cfg.pl",
+                "--Genome_version", self.Genome_version,
+                "--Com", self.Com,
+                "--step", self.step,
+                "--minGene", self.minGene,
+                "--maxGene", self.maxGene,
+                "--minUMI", self.minUMI,
+                "--fold", self.fold,
+                "--Thred", self.Thred,
+                "--mincell", self.mincell,
+                "--cellranger_version", self.cellranger_version,
+                "--Project_name", self.Project_name,
+                "--Project_id", self.Project_id,
+                "--refData", self.refData,
+                "--maxpct", self.maxpct,
+                "--cellNumb", self.cellNumb,
+                "--minexp", self.minexp,
+                "--resolution", self.resolution,
+                "--nucleus", self.nucleus,
+                "--SCT", self.SCT,
+                "--Species", self.Species
+                ]
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            cmd_str = " ".join(cmd)
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd_str + "\n")
+            runOrDie1(exe_shell_sh,output)
+
+
+    def Phred_Change(self):
+        if  glob.glob(os.path.join(self.outdir, "Phred_Change_*/exe-shell.sh.done")):
+            print("发现 Phred_Change_*/exe-shell.sh.done，当前步骤运行完成，跳过进行下一步。")
+            return
+        else:
+            print(f"开始分析Phred_Change")
+            timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+            outdir = os.path.join(self.outdir, f"Phred_Change_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+
+            cmd0 = f"ln input/*.gz {indir}/"
+            runcmd(cmd0)
+            cmd = f"Phred_Change.pl --sample '{self.sample_list}' --r1_fqs {self.fq1_list}  --r2_fqs {self.fq2_list}"
+            print(f"Phred_Change exe-shell is {cmd}")
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd + "\n")
+            runOrDie1(exe_shell_sh,output)
+
+
+    def data_access(self):
+        sample_list = self.sample_list.split(",")
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        for names in sample_list:
+            if  glob.glob(os.path.join(self.outdir, f"data_access_{names}_[0-9]*/exe-shell.sh.done")):
+                print(f"发现 data_access_{names}_*/exe-shell.sh.done，当前步骤运行完成，跳过进行下一步。")
+            else:
+                print(f"开始分析data_access_{names}")
+                outdir = os.path.join(self.outdir, f"data_access_{names}_{timestamp}")
+                output = os.path.join(outdir, "output")
+                indir = os.path.join(outdir, "inputs")
+                input_fastq = os.path.join(indir, f"{names}.fastq")
+                mkdir(output)
+                mkdir(indir)
+                mkdir(input_fastq)
+                cmd0 = f"ln Phred_Change_*/output/{names}.fastq/* {input_fastq}"
+                runcmd(cmd0)
+
+                cmd = f"data_access.pl --sample_dir ../inputs/{names}.fastq"
+                exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+                with open(exe_shell_sh, "a") as f:
+                    f.write(cmd + "\n")
+                print(f"开始分析 {exe_shell_sh}")
+                runOrDie1(exe_shell_sh,output)
+
+            if  glob.glob(os.path.join(self.outdir, f"data_access_fastqc_{names}_*/exe-shell.sh.done")):
+                print(f"发现 data_access_fastqc_{names}_*/exe-shell.sh.done，当前步骤运行完成，跳过进行下一步。")
+            else:
+                print(f"开始分析data_access_fastqc_{names}")
+                outdir = os.path.join(self.outdir, f"data_access_fastqc_{names}_{timestamp}")
+                output = os.path.join(outdir, "output")
+                indir = os.path.join(outdir, "inputs")
+                input_fastq = os.path.join(indir, f"{names}.fastq")
+                mkdir(output)
+                mkdir(indir)
+                mkdir(input_fastq)
+                cmd0 = f"ln Phred_Change_*/output/{names}.fastq/* {input_fastq}"
+                runcmd(cmd0)
+                cmd = f"fastqc_data_access.pl --sample_fq_dir ../inputs/{names}.fastq"
+                exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+                with open(exe_shell_sh, "a") as f:
+                    f.write(cmd + "\n")
+                print(f"开始执行{exe_shell_sh}")
+                runOrDie1(exe_shell_sh,output)
+
+        if glob.glob(os.path.join(self.outdir, f"data_access_state_*/exe-shell.sh.done")):
+            print(f"发现 data_access_state_*/exe-shell.sh.done，当前步骤运行完成，跳过进行下一步。")
+        else:
+            print(f"开始分析data_access_state")
+            outdir = os.path.join(self.outdir, f"data_access_state_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+            cmd0 = f"ln data_access_*_*/output/*.stat {indir}"
+            runcmd(cmd0)
+            inputfile = glob.glob(os.path.join(indir, "*.stat"))
+            inputfiles = ",".join(inputfile)
+            cmd = f"data_access_stat.pl --sample_stats {inputfiles}"
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd + "\n")
+            print(f"开始分析{exe_shell_sh}")
+            runOrDie1(exe_shell_sh,output)
+
+
+    def cellranger(self):
+        sample_list = self.sample_list.split(",")
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        for names in sample_list:
+            if  glob.glob(os.path.join(self.outdir, f"cellranger_{names}_*/exe-shell.sh.done")):
+                print(f"发现 cellranger_{names}_*/exe-shell.sh.done，当前步骤运行完成，跳过进行下一步。")
+            else:
+                print(f"开始分析cellranger_{names}")
+                outdir = os.path.join(self.outdir, f"cellranger_{names}_{timestamp}")
+                output = os.path.join(outdir, "output")
+                indir = os.path.join(outdir, "inputs")
+                input_fastq = os.path.join(indir, f"{names}.fastq")
+                mkdir(output)
+                mkdir(indir)
+                mkdir(input_fastq)
+                cmd0 = f"ln Phred_Change_*/output/{names}.fastq/* {input_fastq} && ln creat_detail_cfg*/output/detail.cfg {indir}"
+                runcmd(cmd0)
+
+                cmd = f"cellrangerCount.pl --detail_cfg ../inputs/detail.cfg --indir ../inputs/{names}.fastq"
+                exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+                with open(exe_shell_sh, "a") as f:
+                    f.write(cmd + "\n")
+                print(f"开始分析{exe_shell_sh}")
+                runOrDie1(exe_shell_sh,output)
+
+        if glob.glob(os.path.join(self.outdir, f"cellrangers_stat*/exe-shell.sh.done")):
+            print(f"发现 cellrangers_stat_*/exe-shell.sh.done，当前步骤运行完成，跳过进行下一步。")
+        else:
+            print(f"开始分析cellrangers_stat")
+            outdir = os.path.join(self.outdir, f"cellrangers_stat_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+            cmd0 = f"ln cellranger_*_*/output/*.metrics_summary.csv {indir}\n"
+            cmd0 += f"ln creat_detail_cfg_*/output/detail.cfg {indir}"
+            runcmd(cmd0)
+            inputfile = glob.glob(os.path.join(indir, "*.metrics_summary.csv"))
+            inputfiles = ",".join(inputfile)
+            cmd = f"basic_info_stat.R -f  {inputfiles} --detail_cfg ../inputs/detail.cfg"
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd + "\n")
+            print(f"开始分析{exe_shell_sh}")
+            runOrDie1(exe_shell_sh,output)
+
+    def dataFilter(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        if  glob.glob(os.path.join(self.outdir, f"dataFilter_[0-9]*/exe-shell.sh.done")):
+                print(f"发现 dataFilter_*/exe-shell.sh.done，当前步骤运行完成，跳过进行下一步。")
+        else:
+            print(f"开始分析dataFilter")
+            outdir = os.path.join(self.outdir, f"dataFilter_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+            cmd0 = f"ln creat_detail_cfg_*/output/cellranger_only.check {indir}\n"
+            cmd0 += f"ln creat_detail_cfg_*/output/deg_cfg.cfg {indir}\n"
+            cmd0 += f"ln -s {self.outdir}/cellranger_*/output/*.Result {indir}"
+            print(cmd0)
+            runcmd(cmd0)
+
+            inputfile = glob.glob(os.path.join(indir, "*.Result"))
+            inputfiles = ",".join(inputfile)
+            cmd = f"SingleFilterAndMergeData.R --cellranger_only_check ../inputs/cellranger_only.check --cfg ../inputs/deg_cfg.cfg --indir {inputfiles}"
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd + "\n")
+            print(f"开始分析{exe_shell_sh}")
+            runOrDie1(exe_shell_sh,output)
+
+    def data_integrated(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        if  glob.glob(os.path.join(self.outdir, f"data_integrated_*/exe-shell.sh.done")):
+                print(f"发现 data_integrated_*/exe-shell.sh.done，当前步骤运行完成，跳过进行下一步。")
+        else:
+            print(f"开始分析data_integrated")
+            outdir = os.path.join(self.outdir, f"data_integrated_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+            cmd0 = f"ln cellrangers_stat_*/output/singlesample_only.check {indir}\n"
+            cmd0 += f"ln creat_detail_cfg_*/output/deg_cfg.cfg {indir}\n"
+            cmd0 += f"ln dataFilter_*/output/symbol.list {indir}\n"
+            cmd0 += f"ln dataFilter_*/output/upload.Rdata {indir}\n"
+            print(cmd0)
+            runcmd(cmd0)
+
+            cmd = f"samplesIntegrated.R --cfg ../inputs/deg_cfg.cfg --rda ../inputs/upload.Rdata --singlesample_only_check ../inputs/singlesample_only.check --id ../inputs/symbol.list"
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd + "\n")
+            print(f"开始执行{exe_shell_sh}")
+            runOrDie1(exe_shell_sh,output)
+
+    def drow_cellcycle(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        if  glob.glob(os.path.join(self.outdir, f"drow_cellcycle_*/exe-shell.sh.done")):
+                print(f"发现 drow_cellcycle_*/exe-shell.sh.done，当前步骤运行完成，跳过进行下一步。")
+        else:
+            print("开始分析drow_cellcycle")
+            outdir = os.path.join(self.outdir, f"drow_cellcycle_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+            cmd0 = f"ln data_integrated_*/output/All.integrated_seruat.Rds {indir}\n"
+            print(cmd0)
+            runcmd(cmd0)
+            cmd = f"cycleheatmap.R --sce ../inputs/All.integrated_seruat.Rds --Species {self.Species}"
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd + "\n")
+            print(f"开始分析{exe_shell_sh}")
+            runOrDie1(exe_shell_sh,output)
+
+    def integrated_analysis(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        if  glob.glob(os.path.join(self.outdir, f"integrated_analysis_[0-9]*/exe-shell.sh.done")):
+                print(f"发现 integrated_analysis_*/exe-shell.sh.done，当前步骤运行完成，跳过进行下一步。")
+        else:
+            print("开始分析integrated_analysis")
+            outdir = os.path.join(self.outdir, f"integrated_analysis_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+            cmd0 = f"ln data_integrated_*/output/All.integrated_seruat.Rds {indir}\n"
+            cmd0 += f"ln creat_detail_cfg_*/output/deg_cfg.cfg {indir}\n"
+            cmd0 += f"ln dataFilter_*/output/symbol.list {indir}\n"
+            print(cmd0)
+            runcmd(cmd0)
+            cmd = f"SamplesDiffInCluster.R --cfg ../inputs/deg_cfg.cfg --id ../inputs/symbol.list --rds ../inputs/All.integrated_seruat.Rds"
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd + "\n")
+            print(f"开始分析{exe_shell_sh}")
+            runOrDie1(exe_shell_sh,output)
+
+    def cluster_TF_analysis(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        if  glob.glob(os.path.join(self.outdir, f"cluster_TF_analysis_*/exe-shell.sh.done")):
+                print(f"发现 cluster_TF_analysis_*/exe-shell.sh.done，当前步骤运行完成，跳过进行下一步。")
+        else:
+            print("开始分析cluster_TF_analysis")
+            outdir = os.path.join(self.outdir, f"cluster_TF_analysis_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+            cmd0 = f"ln integrated_analysis_*/output/All_cluster_Markergene_avgExp.xls {indir}\n"
+            cmd0 += f"ln creat_detail_cfg_*/output/detail.cfg {indir}\n"
+            print(cmd0)
+            runcmd(cmd0)
+            cmd = f"tf_analysis.pl --cfg ../inputs/detail.cfg --all ../inputs/All_cluster_Markergene_avgExp.xls"
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd + "\n")
+            print(f"开始分析{exe_shell_sh}")
+            runOrDie1(exe_shell_sh,output)
+
+    def cluster_ppi(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        if  glob.glob(os.path.join(self.outdir, f"cluster_ppi_*/exe-shell.sh.done")):
+                print(f"发现 cluster_ppi_*/exe-shell.sh.done，当前步骤运行完成，跳过进行下一步。")
+        else:
+            print("开始分析cluster_ppi")
+            outdir = os.path.join(self.outdir, f"cluster_ppi_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+            cmd0 = f"ln -s {self.outdir}/integrated_analysis_*/output/clusterDiff.statistic {indir}\n"
+            cmd0 += f"ln creat_detail_cfg_*/output/detail.cfg {indir}\n"
+            print(cmd0)
+            runcmd(cmd0)
+            cmd = f"ppi_network.pl --cfg ../inputs/detail.cfg --idir ../inputs/clusterDiff.statistic"
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd + "\n")
+            print(f"开始分析{exe_shell_sh}")
+            runOrDie1(exe_shell_sh,output)
+
+    def cluster_enrichment(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        if  glob.glob(os.path.join(self.outdir, f"cluster_enrichment_*/exe-shell.sh.done")):
+                print(f"发现 cluster_enrichment_*/exe-shell.sh.done，当前步骤运行完成，跳过进行下一步。")
+        else:
+            print("开始分析cluster_enrichment")
+            outdir = os.path.join(self.outdir, f"cluster_enrichment_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+            cmd0 = f"ln -s {self.outdir}/integrated_analysis_*/output/clusterDiff.statistic {indir}\n"
+            cmd0 += f"ln creat_detail_cfg_*/output/detail.cfg {indir}\n"
+            cmd0 += f"ln dataFilter_*/output/symbol.list {indir}\n"
+            print(cmd0)
+            runcmd(cmd0)
+            cmd = f"annotation_enrichment.pl --cfg ../inputs/detail.cfg --id_list ../inputs/symbol.list --indir ../inputs/clusterDiff.statistic"
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd + "\n")
+            print(f"开始分析{exe_shell_sh}")
+            runOrDie1(exe_shell_sh,output)
+
+    def group_analysis(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        for group in self.group_list:
+            if  glob.glob(os.path.join(self.outdir, f"group_analysis_{group}_*/exe-shell.sh.done")):
+                print(f"发现 group_analysis_{group}_*/exe-shell.sh.done，当前步骤运行完成，跳过进行下一步。")
+            else:
+                print(self.group_list)
+                outdir = os.path.join(self.outdir, f"group_analysis_{group}_{timestamp}")
+                output = os.path.join(outdir, "output")
+                indir = os.path.join(outdir, "inputs")
+                mkdir(output)
+                mkdir(indir)
+                cmd0 = f"ln data_integrated_*/output/All.integrated_seruat.Rds {indir}\n"
+                cmd0 += f"ln creat_detail_cfg_*/output/deg_cfg.cfg {indir}\n"
+                cmd0 += f"ln creat_detail_cfg_*/output/group1.txt {indir}\n"
+                cmd0 += f"ln dataFilter_*/output/symbol.list {indir}\n"
+                runcmd(cmd0)
+
+                cmd = f"SamplesDiffInGroup.R --cfg ../inputs/deg_cfg.cfg --group ../inputs/{group}.txt --id ../inputs/symbol.list --rds ../inputs/All.integrated_seruat.Rds"
+                exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+                with open(exe_shell_sh, "a") as f:
+                    f.write(cmd + "\n")
+                print(f"开始分析{exe_shell_sh}")
+                runOrDie1(exe_shell_sh,output)
+
+    def group_analysis_stat(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        if glob.glob(os.path.join(self.outdir, f"group_analysis_stat_*/exe-shell.sh.done")):
+            print(f"发现 group_analysis_stat_*/exe-shell.sh.done，当前步骤运行完成，跳过进行下一步。")
+        else:
+            outdir = os.path.join(self.outdir, f"group_analysis_stat_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+            cmd0 = f"ln group_analysis_group*_[0-9]*/output/*.group_deg.stat {indir}\n"
+            cmd0 += f"ln creat_detail_cfg_*/output/Group_info.stat {indir}"
+            runcmd(cmd0)
+            group_deg_stat = ",".join(glob.glob(os.path.join(f"{indir}/*.group_deg.stat")))
+            cmd = f"deg_info.pl --deg_stat {group_deg_stat} --group_name ../inputs/Group_info.stat"
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd + "\n")
+            print(f"开始分析{exe_shell_sh}")
+            runOrDie1(exe_shell_sh,output)
+
+    def group_enrichment(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        group_list = self.group_list
+        for group in group_list:
+            group_name = self.groupdict[f"{group}"]
+            if  glob.glob(os.path.join(self.outdir, f"group_enrichment_{group}_*/exe-shell.sh.done")):
+                print(f"发现 group_enrichment_{group}_*/exe-shell.sh.done，当前步骤运行完成，跳过进行下一步。")
+            else:
+                print(f"开始分析group_enrichment_{group}")
+                outdir = os.path.join(self.outdir, f"group_enrichment_{group}_{timestamp}")
+                output = os.path.join(outdir, "output")
+                indir = os.path.join(outdir, "inputs")
+                mkdir(output)
+                mkdir(indir)
+                cmd0 = f"ln -s {self.outdir}/group_analysis_{group}_*/output/{group_name}.statistic {indir}\n"
+                cmd0 += f"ln creat_detail_cfg_*/output/detail.cfg {indir}\n"
+                cmd0 += f"ln dataFilter_*/output/symbol.list {indir}\n"
+                runcmd(cmd0)
+
+                cmd = f"annotation_enrichment.pl --cfg ../inputs/detail.cfg --id_list ../inputs/symbol.list --indir ../inputs/{group_name}.statistic"
+                exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+                with open(exe_shell_sh, "a") as f:
+                    f.write(cmd + "\n")
+                print(f"开始分析{exe_shell_sh}")
+                runOrDie1(exe_shell_sh,output)
+
+    def CellAnno(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        if glob.glob(os.path.join(self.outdir, f"CellAnno_*/exe-shell.sh.done")):
+            print(f"发现 CellAnno_*/exe-shell.sh.done，当前步骤运行完成，跳过进行下一步。")
+        else:
+            print(f"开始分析CellAnno")
+            outdir = os.path.join(self.outdir, f"CellAnno_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+            cmd0 = f"ln data_integrated_*/output/All.integrated_seruat.Rds {indir}\n"
+            cmd0 += f"ln creat_detail_cfg_*/output/deg_cfg.cfg {indir}\n"
+            runcmd(cmd0)
+            cmd = f"cellAnnotation.R --cfg ../inputs/deg_cfg.cfg --seurat ../inputs/All.integrated_seruat.Rds"
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd + "\n")
+            print(f"开始执行 {exe_shell_sh}")
+            runOrDie1(exe_shell_sh,output)
+
+    def integrated_analysis_cellType(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        my_done = glob.glob(os.path.join(self.outdir, f"integrated_analysis_cellType_[0-9]*/exe-shell.sh.done"))
+        if my_done:
+            print(f"发现{my_done}，当前步骤运行完成，跳过进行下一步。")
+        else:
+            print(f"开始分析integrated_analysis_cellType")
+            outdir = os.path.join(self.outdir, f"integrated_analysis_cellType_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+            cmd0 = f"ln CellAnno_*/output/All.seuratObject_anno.Rds {indir}\n"
+            cmd0 += f"ln creat_detail_cfg_*/output/deg_cfg.cfg {indir}\n"
+            cmd0 += f"ln dataFilter_*/output/symbol.list {indir}\n"
+            cmd0 += f"ln creat_detail_cfg_*/output/refData.cfg {indir}\n"
+            runcmd(cmd0)
+            cmd = f"SamplesDiffInCellType.R --ref ../inputs/refData.cfg --cfg ../inputs/deg_cfg.cfg --id ../inputs/symbol.list --rds ../inputs/All.seuratObject_anno.Rds"
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd + "\n")
+            print(f"开始执行 {exe_shell_sh}")
+            runOrDie1(exe_shell_sh,output)
+
+    def cluster_enrichment_cellType(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        my_done = glob.glob(os.path.join(self.outdir, f"cluster_enrichment_cellType_[0-9]*/exe-shell.sh.done"))
+        if my_done:
+            print(f"发现{my_done}，当前步骤运行完成，跳过进行下一步。")
+        else:
+            print(f"开始分析cluster_enrichment_cellType_cellType")
+            outdir = os.path.join(self.outdir, f"cluster_enrichment_cellType_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+            cmd0 = f"ln -s {self.outdir}/integrated_analysis_cellType_[0-9]*/output/cellTypeDiff.statistic {indir}\n"
+            cmd0 += f"ln creat_detail_cfg_*/output/detail.cfg {indir}\n"
+            cmd0 += f"ln dataFilter_*/output/symbol.list {indir}\n"
+            runcmd(cmd0)
+            cmd = f"annotation_enrichment.pl --cfg ../inputs/detail.cfg --id_list ../inputs/symbol.list --indir ../inputs/cellTypeDiff.statistic"
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd + "\n")
+            print(f"开始执行 {exe_shell_sh}")
+            runOrDie1(exe_shell_sh,output)
+
+    def cluster_ppi_cellType(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        my_done = glob.glob(os.path.join(self.outdir, f"cluster_ppi_cellType_[0-9]*/exe-shell.sh.done"))
+        if my_done:
+            print(f"发现{my_done}，当前步骤运行完成，跳过进行下一步。")
+        else:
+            print(f"开始分析cluster_ppi_cellType")
+            outdir = os.path.join(self.outdir, f"cluster_ppi_cellType_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+            cmd0 = f"ln -s {self.outdir}/integrated_analysis_cellType_[0-9]*/output/cellTypeDiff.statistic {indir}\n"
+            cmd0 += f"ln creat_detail_cfg_*/output/detail.cfg {indir}\n"
+            #cmd0 += f"ln dataFilter_*/output/symbol.list {indir}\n"
+            runcmd(cmd0)
+            cmd = f"ppi_network.pl --cfg ../inputs/detail.cfg --idir ../inputs/cellTypeDiff.statistic"
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd + "\n")
+            print(f"开始执行 {exe_shell_sh}")
+            runOrDie1(exe_shell_sh,output)
+
+    def cluster_TF_analysis_cellType(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        my_done = glob.glob(os.path.join(self.outdir, f"cluster_TF_analysis_cellType_[0-9]*/exe-shell.sh.done"))
+        if my_done:
+            print(f"发现{my_done}，当前步骤运行完成，跳过进行下一步。")
+        else:
+            print(f"开始分析cluster_TF_analysis_cellType")
+            outdir = os.path.join(self.outdir, f"cluster_TF_analysis_cellType_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+            cmd0 = f"ln {self.outdir}/integrated_analysis_cellType_[0-9]*/output/All_cellType_Markergene_avgExp.xls {indir}\n"
+            cmd0 += f"ln creat_detail_cfg_*/output/detail.cfg {indir}\n"
+            #cmd0 += f"ln dataFilter_*/output/symbol.list {indir}\n"
+            runcmd(cmd0)
+            cmd = f"tf_analysis.pl --cfg ../inputs/detail.cfg --all ../inputs/All_cellType_Markergene_avgExp.xls"
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd + "\n")
+            print(f"开始执行 {exe_shell_sh}")
+            runOrDie1(exe_shell_sh,output)
+
+    def group_analysis_cellType(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        for group in self.group_list:
+            my_done = glob.glob(os.path.join(self.outdir, f"group_analysis_cellType_{group}_[0-9]*/exe-shell.sh.done"))
+            if  my_done:
+                print(f"发现 {my_done}，当前步骤运行完成，跳过进行下一步。")
+            else:
+                print(f"开始分析group_analysis_cellType")
+                outdir = os.path.join(self.outdir, f"group_analysis_cellType_{group}_{timestamp}")
+                output = os.path.join(outdir, "output")
+                indir = os.path.join(outdir, "inputs")
+                mkdir(output)
+                mkdir(indir)
+                cmd0 = f"ln  {self.outdir}/integrated_analysis_cellType_[0-9]*/output/All_seruat_anno_cellType.Rds {indir}\n"
+                cmd0 += f"ln creat_detail_cfg_*/output/deg_cfg.cfg {indir}\n"
+                cmd0 += f"ln creat_detail_cfg_*/output/{group}.txt {indir}\n"
+                cmd0 += f"ln dataFilter_*/output/symbol.list {indir}\n"
+                runcmd(cmd0)
+
+                cmd = f"SamplesDiffInGroup.R --cfg ../inputs/deg_cfg.cfg --group ../inputs/{group}.txt --id ../inputs/symbol.list --rds ../inputs/All_seruat_anno_cellType.Rds"
+                exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+                with open(exe_shell_sh, "a") as f:
+                    f.write(cmd + "\n")
+                print(f"开始执行{exe_shell_sh}")
+                runOrDie1(exe_shell_sh,output)
+
+    def group_analysis_stat_cellType(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        my_done = glob.glob(os.path.join(self.outdir, f"group_analysis_stat_cellType_*/exe-shell.sh.done"))
+        if my_done:
+            print(f"发现 {my_done} ，当前步骤运行完成，跳过进行下一步。")
+        else:
+            print(f"开始分析group_analysis_stat_cellType")
+            outdir = os.path.join(self.outdir, f"group_analysis_stat_cellType_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+            cmd0 = f"ln group_analysis_cellType_group*_[0-9]*/output/cellType_*.group_deg.stat {indir}\n"
+            cmd0 += f"ln creat_detail_cfg_*/output/Group_info.stat {indir}"
+            runcmd(cmd0)
+            group_deg_stat = ",".join(glob.glob(os.path.join(f"{indir}/cellType_*.group_deg.stat")))
+            cmd = f"deg_info.pl --deg_stat {group_deg_stat} --group_name ../inputs/Group_info.stat"
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd + "\n")
+            print(f"开始分析 {exe_shell_sh}")
+            runOrDie1(exe_shell_sh,output)
+
+    def group_enrichment_cellType(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+
+        for group in self.group_list:
+            my_done = glob.glob(os.path.join(self.outdir, f"group_enrichment_cellType_{group}_[0-9]*/exe-shell.sh.done"))
+            if  my_done:
+                print(f"发现 {my_done}，当前步骤运行完成，跳过进行下一步。")
+            else:
+                print(f"开始分析 group_enrichment_cellType_{group}")
+                print(self.groupdict)
+                outdir = os.path.join(self.outdir, f"group_enrichment_cellType_{group}_{timestamp}")
+                output = os.path.join(outdir, "output")
+                indir = os.path.join(outdir, "inputs")
+                mkdir(output)
+                mkdir(indir)
+                group_name = self.groupdict[f"{group}"]
+                cmd0 = f"ln -s {self.outdir}/group_analysis_cellType_{group}_[0-9]*/output/cellType_{group_name}.statistic {indir}\n"
+                cmd0 += f"ln creat_detail_cfg_*/output/detail.cfg {indir}\n"
+                cmd0 += f"ln dataFilter_*/output/symbol.list {indir}\n"
+                runcmd(cmd0)
+
+                cmd = f"annotation_enrichment.pl --cfg ../inputs/detail.cfg --id_list ../inputs/symbol.list --indir ../inputs/cellType_{group_name}.statistic"
+                exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+                with open(exe_shell_sh, "a") as f:
+                    f.write(cmd + "\n")
+                print(f"开始执行 {exe_shell_sh}")
+                runOrDie1(exe_shell_sh,output)
+
+    def singleanalysis(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        sample_list = self.sample_list.split(",")
+        for names in sample_list:
+            if  glob.glob(os.path.join(self.outdir, f"singleanalysis_{names}_[0-9]*/exe-shell.sh.done")):
+                print(f"发现 singleanalysis_{names}_*/exe-shell.sh.done，当前步骤运行完成，跳过进行下一步。")
+            else:
+                print(f"开始分析singleanalysis_{names}")
+                outdir = os.path.join(self.outdir, f"singleanalysis_{names}_{timestamp}")
+                output = os.path.join(outdir, "output")
+                indir = os.path.join(outdir, "inputs")
+                mkdir(output)
+                mkdir(indir)
+                cmd0 = f"ln dataFilter_*/output/{names}.single_qc.Rds {indir}\n"
+                cmd0 += f"ln dataFilter_*/output/symbol.list {indir}\n"
+                cmd0 += f"ln creat_detail_cfg_*/output/deg_cfg.cfg {indir}\n"
+                runcmd(cmd0)
+
+                cmd = f"SingleAnalysisTsneUmap.R --qcrds ../inputs/{names}.single_qc.Rds --cfg ../inputs/deg_cfg.cfg --id ../inputs/symbol.list"
+                exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+                with open(exe_shell_sh, "a") as f:
+                    f.write(cmd + "\n")
+                print(f"开始分析{exe_shell_sh}")
+                runOrDie1(exe_shell_sh,output)
+
+    def singleCellAnno(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        sample_list = self.sample_list.split(",")
+        for names in sample_list:
+            my_done = glob.glob(os.path.join(self.outdir, f"singleCellAnno_{names}_[0-9]*/exe-shell.sh.done"))
+            if  my_done:
+                print(f"发现 {my_done}，当前步骤运行完成，跳过进行下一步。")
+            else:
+                print(f"开始分析singleCellAnno_{names}")
+                outdir = os.path.join(self.outdir, f"singleCellAnno_{names}_{timestamp}")
+                output = os.path.join(outdir, "output")
+                indir = os.path.join(outdir, "inputs")
+                mkdir(output)
+                mkdir(indir)
+                cmd0 = f"ln singleanalysis_{names}_[0-9]*/output/{names}.single_seruat.Rds {indir}\n"
+                #cmd0 += f"ln dataFilter_*/output/symbol.list {indir}\n"
+                cmd0 += f"ln creat_detail_cfg_*/output/deg_cfg.cfg {indir}\n"
+                runcmd(cmd0)
+
+                cmd = f"cellAnnotation.R --cfg ../inputs/deg_cfg.cfg --seurat ../inputs/{names}.single_seruat.Rds"
+                exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+                with open(exe_shell_sh, "a") as f:
+                    f.write(cmd + "\n")
+                print(f"开始分析{exe_shell_sh}")
+                runOrDie1(exe_shell_sh,output)
+
+    def singleanalysis_cellType(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        print(f"开始分析singleanalysis_cellType")
+        sample_list = self.sample_list.split(",")
+        for names in sample_list:
+            my_done = glob.glob(os.path.join(self.outdir, f"singleanalysis_cellType_{names}_[0-9]*/exe-shell.sh.done"))
+            if  my_done:
+                print(f"发现 {my_done}，当前步骤运行完成，跳过进行下一步。")
+            else:
+                print(f"开始分析singleanalysis_cellType_{names}")
+                outdir = os.path.join(self.outdir, f"singleanalysis_cellType_{names}_{timestamp}")
+                output = os.path.join(outdir, "output")
+                indir = os.path.join(outdir, "inputs")
+                mkdir(output)
+                mkdir(indir)
+                cmd0 = f"ln singleCellAnno_{names}_*/output/{names}.seuratObject_anno.Rds {indir}\n"
+                cmd0 += f"ln dataFilter_*/output/symbol.list {indir}\n"
+                cmd0 += f"ln creat_detail_cfg_*/output/detail.cfg {indir}\n"
+                cmd0 += f"ln creat_detail_cfg_*/output/refData.cfg {indir}\n"
+                runcmd(cmd0)
+
+                cmd = f"SingleAnalysis_cellType.R --ref ../inputs/refData.cfg --cfg ../inputs/detail.cfg --annords ../inputs/{names}.seuratObject_anno.Rds --id ../inputs/symbol.list"
+                exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+                with open(exe_shell_sh, "a") as f:
+                    f.write(cmd + "\n")
+                print(f"开始分析{exe_shell_sh}")
+                runOrDie1(exe_shell_sh,output)
+
+    def single_TF_analysis_cellType(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        sample_list = self.sample_list.split(",")
+        for names in sample_list:
+            my_done = glob.glob(os.path.join(self.outdir, f"single_TF_analysis_cellType_{names}_[0-9]*/exe-shell.sh.done"))
+            if  my_done:
+                print(f"发现 {my_done}，当前步骤运行完成，跳过进行下一步。")
+            else:
+                print(f"开始分析single_TF_analysis_cellType_{names}")
+                outdir = os.path.join(self.outdir, f"single_TF_analysis_cellType_{names}_{timestamp}")
+                output = os.path.join(outdir, "output")
+                indir = os.path.join(outdir, "inputs")
+                mkdir(output)
+                mkdir(indir)
+                cmd0 = f"ln singleanalysis_cellType_{names}_*/output/{names}All_cluster_Markergene_avgExp.xls. {indir}\n"
+                #cmd0 = f"ln singleCellAnno_{names}_[0-9]*/output/{names}.seuratObject_anno.Rds {indir}\n"
+                cmd0 += f"ln creat_detail_cfg_*/output/detail.cfg {indir}\n"
+                runcmd(cmd0)
+                if glob.glob(f"{indir}/{names}All_cluster_Markergene_avgExp.xls"):
+                    cmd = f"tf_analysis.pl --cfg ../inputs/detail.cfg --all ../inputs/{names}All_cluster_Markergene_avgExp.xls"
+                else:
+                    cmd = f"tf_analysis.pl --cfg ../inputs/detail.cfg"
+                exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+                with open(exe_shell_sh, "a") as f:
+                    f.write(cmd + "\n")
+                print(f"开始分析{exe_shell_sh}")
+                runOrDie1(exe_shell_sh,output)
+
+    def single_ppi_cellType(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        sample_list = self.sample_list.split(",")
+        for names in sample_list:
+            my_done = glob.glob(os.path.join(self.outdir, f"single_ppi_cellType_{names}_[0-9]*/exe-shell.sh.done"))
+            if  my_done:
+                print(f"发现 {my_done}，当前步骤运行完成，跳过进行下一步。")
+            else:
+                print(f"开始分析single_ppi_cellType_{names}")
+                outdir = os.path.join(self.outdir, f"single_ppi_cellType_{names}_{timestamp}")
+                output = os.path.join(outdir, "output")
+                indir = os.path.join(outdir, "inputs")
+                mkdir(output)
+                mkdir(indir)
+                cmd0 = f"ln -s {self.outdir}/singleanalysis_cellType_{names}_*/output/{names}.statistic_cellType {indir}\n"
+                #cmd0 = f"ln singleCellAnno_{names}_[0-9]*/output/{names}.seuratObject_anno.Rds {indir}\n"
+                cmd0 += f"ln creat_detail_cfg_*/output/detail.cfg {indir}\n"
+                runcmd(cmd0)
+                if os.path.exists(f"{indir}/{names}.statistic_cellType"):
+                    cmd = f"ppi_network.pl --cfg ../inputs/detail.cfg --idir ../inputs/{names}.statistic_cellType"
+                else:
+                    cmd = f"ppi_network.pl --cfg ../inputs/detail.cfg"
+                exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+                with open(exe_shell_sh, "a") as f:
+                    f.write(cmd + "\n")
+                print(f"开始分析{exe_shell_sh}")
+                runOrDie1(exe_shell_sh,output)
+
+    def Anno_enrichment_cellType(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        sample_list = self.sample_list.split(",")
+        for names in sample_list:
+            my_done = glob.glob(os.path.join(self.outdir, f"Anno_enrichment_cellType_{names}_[0-9]*/exe-shell.sh.done"))
+            if  my_done:
+                print(f"发现 {my_done}，当前步骤运行完成，跳过进行下一步。")
+            else:
+                print(f"开始分析Anno_enrichment_cellType_{names}")
+                outdir = os.path.join(self.outdir, f"Anno_enrichment_cellType_{names}_{timestamp}")
+                output = os.path.join(outdir, "output")
+                indir = os.path.join(outdir, "inputs")
+                mkdir(output)
+                mkdir(indir)
+                cmd0 = f"ln -s {self.outdir}/singleanalysis_cellType_{names}_*/output/{names}.statistic_cellType {indir}\n"
+                #cmd0 = f"ln singleCellAnno_{names}_[0-9]*/output/{names}.seuratObject_anno.Rds {indir}\n"
+                cmd0 += f"ln creat_detail_cfg_*/output/detail.cfg {indir}\n"
+                cmd0 += f"ln dataFilter_*/output/symbol.list {indir}\n"
+                runcmd(cmd0)
+                if os.path.exists(f"{indir}/{names}.statistic_cellType"):
+                    cmd = f"annotation_enrichment.pl --cfg ../inputs/detail.cfg --id_list ../inputs/symbol.list --indir ../inputs/CON1.statistic_cellType"
+                else:
+                    cmd = f"annotation_enrichment.pl --cfg ../inputs/detail.cfg --id_list ../inputs/symbol.list --indir ../inputs/CON1.statistic_cellType"
+                exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+                with open(exe_shell_sh, "a") as f:
+                    f.write(cmd + "\n")
+                print(f"开始分析{exe_shell_sh}")
+                runOrDie1(exe_shell_sh,output)
+
+    def single_ppi(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        sample_list = self.sample_list.split(",")
+        for names in sample_list:
+
+            my_done = glob.glob(os.path.join(self.outdir, f"single_ppi_{names}_[0-9]*/exe-shell.sh.done"))
+            if  my_done:
+                print(f"发现 {my_done}，当前步骤运行完成，跳过进行下一步。")
+            else:
+                print(f"开始分析single_ppi_{names}")
+                outdir = os.path.join(self.outdir, f"single_ppi_{names}_{timestamp}")
+                output = os.path.join(outdir, "output")
+                indir = os.path.join(outdir, "inputs")
+                mkdir(output)
+                mkdir(indir)
+                cmd0 = f"ln -s {self.outdir}/singleanalysis_{names}_[0-9]*/output/{names}.statistic {indir}\n"
+                #cmd0 = f"ln singleCellAnno_{names}_[0-9]*/output/{names}.seuratObject_anno.Rds {indir}\n"
+                cmd0 += f"ln creat_detail_cfg_*/output/detail.cfg {indir}\n"
+                runcmd(cmd0)
+                cmd = f"ppi_network.pl --cfg ../inputs/detail.cfg --idir ../inputs/{names}.statistic"
+                exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+                with open(exe_shell_sh, "a") as f:
+                    f.write(cmd + "\n")
+                print(f"开始分析{exe_shell_sh}")
+                runOrDie1(exe_shell_sh,output)
+
+    def single_TF_analysis(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        sample_list = self.sample_list.split(",")
+        for names in sample_list:
+
+            my_done = glob.glob(os.path.join(self.outdir, f"single_TF_analysis_{names}_[0-9]*/exe-shell.sh.done"))
+            if  my_done:
+                print(f"发现 {my_done}，当前步骤运行完成，跳过进行下一步。")
+            else:
+                print(f"开始分析single_TF_analysis_{names}")
+                outdir = os.path.join(self.outdir, f"single_TF_analysis_{names}_{timestamp}")
+                output = os.path.join(outdir, "output")
+                indir = os.path.join(outdir, "inputs")
+                mkdir(output)
+                mkdir(indir)
+                cmd0 = f"ln {self.outdir}/singleanalysis_{names}_[0-9]*/output/{names}.All_cluster_Markergene_avgExp.xls {indir}\n"
+                #cmd0 = f"ln singleCellAnno_{names}_[0-9]*/output/{names}.seuratObject_anno.Rds {indir}\n"
+                cmd0 += f"ln creat_detail_cfg_*/output/detail.cfg {indir}\n"
+                cmd0 += f"ln dataFilter_*/output/symbol.list {indir}\n"
+                runcmd(cmd0)
+                cmd = f"annotation_enrichment.pl --cfg ../inputs/detail.cfg --id_list ../inputs/symbol.list --indir ../inputs/{names}.statistic"
+                exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+                with open(exe_shell_sh, "a") as f:
+                    f.write(cmd + "\n")
+                print(f"开始分析{exe_shell_sh}")
+                runOrDie1(exe_shell_sh,output)
+
+    def Anno_enrichment(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        sample_list = self.sample_list.split(",")
+        for names in sample_list:
+            my_done = glob.glob(os.path.join(self.outdir, f"Anno_enrichment_{names}_[0-9]*/exe-shell.sh.done"))
+            if  my_done:
+                print(f"发现 {my_done}，当前步骤运行完成，跳过进行下一步。")
+            else:
+                print(f"开始分析Anno_enrichment_{names}")
+                outdir = os.path.join(self.outdir, f"Anno_enrichment_{names}_{timestamp}")
+                output = os.path.join(outdir, "output")
+                indir = os.path.join(outdir, "inputs")
+                mkdir(output)
+                mkdir(indir)
+                cmd0 = f"ln -s {self.outdir}/singleanalysis_{names}_[0-9]*/output/{names}.statistic {indir}\n"
+                cmd0 += f"ln dataFilter_*/output/symbol.list {indir}\n"
+                cmd0 += f"ln creat_detail_cfg_*/output/detail.cfg {indir}\n"
+                runcmd(cmd0)
+                cmd = f"annotation_enrichment.pl --cfg ../inputs/detail.cfg --id_list ../inputs/symbol.list --indir ../inputs/{names}.statistic"
+                exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+                with open(exe_shell_sh, "a") as f:
+                    f.write(cmd + "\n")
+                print(f"开始分析{exe_shell_sh}")
+                runOrDie1(exe_shell_sh,output)
+
+    def Backup(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        my_done = glob.glob(os.path.join(self.outdir, f"Backup_*/exe-shell.sh.done"))
+        if my_done:
+            print(f"发现 {my_done} ，当前步骤运行完成，跳过进行下一步。")
+        else:
+            print(f"开始分析Backup")
+            outdir = os.path.join(self.outdir, f"Backup_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+            cmd0 = f"ln CellAnno_*/output/All.seuratObject_anno.Rds {indir}\n"
+            cmd0 += f"ln singleanalysis_*_[0-9]*/output/*.All_cluster_avgExp.xls {indir}\n"
+            cmd0 += f"ln singleanalysis_*_[0-9]*/output/*.All_cluster_Markergene_avgExp.xls {indir}\n"
+            cmd0 += f"ln -s {self.outdir}/cellranger_*_[0-9]*/output/*.Result {indir}\n"
+            cmd0 += f"ln singleCellAnno_*_[0-9]*/output/*.seuratObject_anno.Rds {indir}\n"
+            runcmd(cmd0)
+
+            All_cluster_Markergene = ",".join(glob.glob(os.path.join(f"{indir}/*.All_cluster_Markergene_avgExp.xls")))
+            All_cluster_avgExp = ",".join(glob.glob(os.path.join(f"{indir}/*.All_cluster_avgExp.xls")))
+            object_1 = ",".join(glob.glob(os.path.join(f"{indir}/*.seuratObject_anno.Rds")))
+            raw_count = ",".join(glob.glob(os.path.join(f"{indir}/*.Result")))
+            cmd = f"backup_data.pl --All_cluster_Markergene {All_cluster_Markergene} --All_cluster_avgExp {All_cluster_avgExp} --object1 {object_1}  --raw_count {raw_count} --object2 ../inputs/All.seuratObject_anno.Rds"
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd + "\n")
+            print(f"开始分析 {exe_shell_sh}")
+            runOrDie1(exe_shell_sh,output)
+
+    def report(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        my_done = glob.glob(os.path.join(self.outdir, f"report_*/exe-shell.sh.done"))
+        if my_done:
+            print(f"发现 {my_done} ，当前步骤运行完成，工作流已完成")
+        else:
+            print(f"开始分析report")
+            outdir = os.path.join(self.outdir, f"report_{timestamp}")
+            output = os.path.join(outdir, "output")
+            indir = os.path.join(outdir, "inputs")
+            mkdir(output)
+            mkdir(indir)
+
+            cmd0  = f"cp -rl cluster_ppi_cellType_[0-9]*/output/cellTypeDiff.ppi_result_cellType {indir}\n"
+            cmd0 += f"cp -rl group_analysis_stat_[0-9]*/output/Group_deg.stat {indir}\n"
+            cmd0 += f"cp -rl integrated_analysis_[0-9]*/output/clusterDiff.volcano {indir}\n"
+            cmd0 += f"cp -rl group_enrichment_cellType_*_[0-9]*/output/cellType_*.Anno_enrichment_cellType {indir}\n"
+            cmd0 += f"cp -rl cellrangers_stat_[0-9]*/output/total_mapped_info_stat.xls {indir}\n"
+            cmd0 += f"cp -rl singleanalysis_*_[0-9]*/output/*.volcano {indir}\n"
+            cmd0 += f"cp -rl cellranger_*_[0-9]*/output/*.analysis {indir}\n"
+            cmd0 += f"cp -rl integrated_analysis_cellType_[0-9]*/output/cellTypeDiff.statistic {indir}\n"
+            cmd0 += f"cp -rl drow_cellcycle_[0-9]*/output/* {indir}\n"
+            cmd0 += f"cp -rl cellranger_*_[0-9]*/output/*.Result {indir}\n"
+            cmd0 += f"cp -rl data_integrated_[0-9]*/output/integrated {indir}\n"
+            cmd0 += f"cp -rl integrated_analysis_[0-9]*/output/drag_file {indir}\n"
+            cmd0 += f"cp -rl singleanalysis_cellType_*_[0-9]*/output/*.cellType.xls {indir}\n"
+            cmd0 += f"cp -rl dataFilter_[0-9]*/output/singleSample {indir}\n"
+            cmd0 += f"cp -rl integrated_analysis_cellType_[0-9]*/output/cellTypeDiff.topmarker {indir}\n"
+            cmd0 += f"cp -rl group_analysis_group*_[0-9]*/output/*.volcano {indir}\n"
+            cmd0 += f"cp -rl cluster_enrichment_cellType_[0-9]*/output/cellTypeDiff.Anno_enrichment_cellType {indir}\n"
+            cmd0 += f"cp -rl CellAnno_[0-9]*/output/All.cluster_annotation_sample_barplot.png {indir}\n"
+            cmd0 += f"cp -rl CellAnno_[0-9]*/output/All.cluster_annotation_tsne.png {indir}\n"
+            cmd0 += f"cp -rl CellAnno_[0-9]*/output/All.cluster_annotation_umap.png {indir}\n"
+            cmd0 += f"cp -rl data_access_state_[0-9]*/output/AllSample_GC_Q.stat {indir}\n"
+            cmd0 += f"cp -rl cluster_ppi_[0-9]*/output/clusterDiff.ppi_result {indir}\n"
+            cmd0 += f"cp -rl cluster_TF_analysis_cellType_[0-9]*/output/cellTypeDiff.TFBS_Analysis_cellType {indir}\n"
+            cmd0 += f"cp -rl creat_detail_cfg_[0-9]*/output/detail.cfg {indir}\n"
+            cmd0 += f"cp -rl integrated_analysis_cellType_[0-9]*/output/drag_file_cellType {indir}\n"
+            cmd0 += f"cp -rl Phred_Change_[0-9]*/output/data.cfg {indir}\n"
+            cmd0 += f"cp -rl singleanalysis_cellType_*_[0-9]*/output/*.topmarker_cellType {indir}\n"
+            cmd0 += f"cp -rl group_analysis_stat_cellType_[0-9]*/output/cellType_Group_deg.stat {indir}\n"
+            cmd0 += f"cp -rl cluster_TF_analysis_[0-9]*/output/clusterDiff.TFBS_Analysis {indir}\n"
+            cmd0 += f"cp -rl singleanalysis_cellType_*_[0-9]*/output/*.volcano_cellType {indir}\n"
+            cmd0 += f"cp -rl integrated_analysis_[0-9]*/output/clusterDiff.statistic {indir}\n"
+            cmd0 += f"cp -rl group_enrichment_group*_[0-9]*/output/*.Anno_enrichment {indir}\n"
+            cmd0 += f"cp -rl single_ppi_cellType_*_[0-9]*/output/*.ppi_result_cellType {indir}\n"
+            cmd0 += f"cp -rl singleanalysis_*_[0-9]*/output/*.topmarker {indir}\n"
+            cmd0 += f"cp -rl integrated_analysis_cellType_[0-9]*/output/cellTypeDiff.volcano {indir}\n"
+            cmd0 += f"cp -rl group_analysis_group*_[0-9]*/output/*.topmarker {indir}\n"
+            cmd0 += f"cp -rl singleCellAnno_*_[0-9]*/output/*.cluster_annotation_*.png {indir}\n"
+            cmd0 += f"cp -rl group_analysis_cellType_group*_[0-9]*/output/cellType_*.statistic {indir}\n"
+            cmd0 += f"cp -rl CellAnno_[0-9]*/output/All.cluster_annotation_cluster_statBar.pdf {indir}\n"
+            cmd0 += f"cp -rl CellAnno_[0-9]*/output/All.cluster_annotation_heatmap.pdf {indir}\n"
+            cmd0 += f"cp -rl CellAnno_[0-9]*/output/All.cluster_annotation_sample_barplot.pdf {indir}\n"
+            cmd0 += f"cp -rl CellAnno_[0-9]*/output/All.cluster_annotation_tsne.pdf {indir}\n"
+            cmd0 += f"cp -rl CellAnno_[0-9]*/output/All.cluster_annotation_umap.pdf {indir}\n"
+            cmd0 += f"cp -rl single_TF_analysis_*_[0-9]*/output/*.TFBS_Analysis {indir}\n"
+            cmd0 += f"cp -rl Backup_[0-9]*/output/Backup_Data {indir}\n"
+            cmd0 += f"cp -rl group_analysis_group*_[0-9]*/output/*.statistic {indir}\n"
+            cmd0 += f"cp -rl cluster_enrichment_[0-9]*/output/clusterDiff.Anno_enrichment {indir}\n"
+            cmd0 += f"cp -rl CellAnno_[0-9]*/output/All.cell_annotation_stat.xls {indir}\n"
+            cmd0 += f"cp -rl CellAnno_[0-9]*/output/All.cluster_annotation_result.xls {indir}\n"
+            cmd0 += f"cp -rl CellAnno_[0-9]*/output/All.cluster_annotation_scores.xls {indir}\n"
+            cmd0 += f"cp -rl singleanalysis_*_[0-9]*/output/*.statistic {indir}\n"
+            cmd0 += f"cp -rl singleanalysis_*_[0-9]*/output/*.clusters.xls {indir}\n"
+            cmd0 += f"cp -rl group_analysis_cellType_*_[0-9]*/output/cellType_*.topmarker {indir}\n"
+            cmd0 += f"cp -rl dataFilter_[0-9]*/output/symbol.list {indir}\n"
+            cmd0 += f"cp -rl cellrangers_stat_[0-9]*/output/total_seqence_info_stat.xls {indir}\n"
+            cmd0 += f"cp -rl dataFilter_[0-9]*/output/cell_stat_info.xls {indir}\n"
+            cmd0 += f"cp -rl data_access_fastqc_*_[0-9]*/output/*_fastqc {indir}\n"
+            cmd0 += f"cp -rl singleCellAnno_*_[0-9]*/output/*.cluster_annotation_*.pdf {indir}\n"
+            cmd0 += f"cp -rl singleanalysis_*_[0-9]*/output/*.reduction {indir}\n"
+            cmd0 += f"cp -rl singleanalysis_cellType_*_[0-9]*/output/*.statistic_cellType {indir}\n"
+            cmd0 += f"cp -rl singleanalysis_cellType_*_[0-9]*/output/*.drag_file_cellType {indir}\n"
+            cmd0 += f"cp -rl singleCellAnno_*_[0-9]*/output/*.xls {indir}\n"
+            cmd0 += f"cp -rl cellrangers_stat_[0-9]*/output/total_cell_info_stat.xls {indir}\n"
+            cmd0 += f"cp -rl integrated_analysis_[0-9]*/output/clusterDiff.topmarker {indir}\n"
+            cmd0 += f"cp -rl single_ppi_*_[0-9]*/output/*.ppi_result {indir}\n"
+            cmd0 += f"cp -rl singleCellAnno_*_[0-9]*/output/OtherAnnoDatabase {indir}\n"
+            cmd0 += f"cp -rl group_analysis_cellType_group*_[0-9]*/output/cellType_*.volcano {indir}\n"
+            cmd0 += f"cp -rl cluster_enrichment_cellType_[0-9]*/output/cellTypeDiff.Anno_enrichment_cellType {indir}\n"
+            cmd0 += f"cp -rl CellAnno_[0-9]*/output/All.cluster_annotation_*.png {indir}\n"
+            cmd0 += f"cp -rl data_access_state_[0-9]*/output/AllSample_GC_Q.stat {indir}\n"
+            cmd0 += f"cp -rl cluster_ppi_[0-9]*/output/clusterDiff.ppi_result {indir}\n"
+            cmd0 += f"cp -rl cluster_TF_analysis_cellType_[0-9]*/output/cellTypeDiff.TFBS_Analysis_cellType {indir}\n"
+            cmd0 += f"cp -rl drow_cellcycle_[0-9]*/output/All.cellCycle_*.pdf {indir}\n"
+            cmd0 += f"cp -rl singleanalysis_*_[0-9]*/output/*.drag_file {indir}\n"
+            cmd0 += f"cp -rl Anno_enrichment_*_[0-9]*/output/*.Anno_enrichment {indir}\n"
+
+            runcmd(cmd0)
+            sample_list = self.sample_list.split(",")
+            group_value = self.group_value
+            print(sample_list)
+            print(group_value)
+
+            print(f"{generate_param_values('cellType_{groups}.Anno_enrichment_cellType', grouplist=group_value, inputs_dir=indir)}")
+            print(f"{generate_param_values('{samples}.volcano', namelist=sample_list, inputs_dir=indir)}")
+            cmd = (
+                f"analysis_report.pl "
+                f"--cluster_ppi_celltype {indir}/cellTypeDiff.ppi_result_cellType "
+                f"--group_deg_stat {indir}/Group_deg.stat "
+                f"--allcluster_volcano {indir}/clusterDiff.volcano "
+                f"--group_enrichment_celltype {generate_param_values('cellType_{groups}.Anno_enrichment_cellType', grouplist=group_value, inputs_dir=indir)} "
+                f"--total_mapped_info_stat {indir}/total_mapped_info_stat.xls "
+                f"--single_sample_volcano {generate_param_values('{samples}.volcano', namelist=sample_list, inputs_dir=indir)} "
+                f"--cellranger_analysis {generate_param_values('{samples}.analysis', namelist=sample_list, inputs_dir=indir)} "
+                f"--allcluster_statistic_celltype {indir}/cellTypeDiff.statistic "
+                f"--cell_cycle_heatmap {indir}/All.cell_cycle_heatmap.pdf,{indir}/All.cell_cycle_heatmap.png "
+                f"--cell_cycle_xls {indir}/All.cell_cycle.xls "
+                f"--groupdiff_volcano {generate_param_values('{groups}.volcano', grouplist=group_value, inputs_dir=indir)} "
+                f"--cellranger_result {generate_param_values('{samples}.Result', namelist=sample_list, inputs_dir=indir)} "
+                f"--integrated_result {indir}/integrated "
+                f"--all_avgexp_cluster {indir}/drag_file "
+                f"--single_sample_celltype {generate_param_values('{samples}.cellType.xls', namelist=sample_list, inputs_dir=indir)} "
+                f"--sample_filter {indir}/singleSample "
+                f"--allcluster_topmarker_celltype {indir}/cellTypeDiff.topmarker "
+                f"--cfg2 {indir}/detail.cfg "
+                f"--all_avgexp_cluster_celltype {indir}/drag_file_cellType "
+                f"--cfg1 {indir}/data.cfg "
+                f"--single_sample_topmarker_celltype {generate_param_values('{samples}.topmarker_cellType', namelist=sample_list, inputs_dir=indir)} "
+                f"--group_deg_stat_celltype {indir}/cellType_Group_deg.stat "
+                f"--cluster_tf_result {indir}/clusterDiff.TFBS_Analysis "
+                f"--single_sample_volcano_celltype {generate_param_values('{samples}.volcano_cellType', namelist=sample_list, inputs_dir=indir)} "
+                f"--allcluster_statistic {indir}/clusterDiff.statistic "
+                f"--group_enrichment {generate_param_values('{groups}.Anno_enrichment', grouplist=group_value, inputs_dir=indir)} "
+                f"--single_sample_ppi_celltype {generate_param_values('{samples}.ppi_result_cellType', namelist=sample_list, inputs_dir=indir)} "
+                f"--single_sample_topmarker {generate_param_values('{samples}.topmarker', namelist=sample_list, inputs_dir=indir)} "
+                f"--allcluster_volcano_celltype {indir}/cellTypeDiff.volcano "
+                f"--groupdiff_topmarker {generate_param_values('{groups}.topmarker', grouplist=group_value, inputs_dir=indir)} "
+                f"--single_typeannopng {generate_param_values('{samples}.cluster_annotation_heatmap.png', namelist=sample_list, inputs_dir=indir)},{generate_param_values('{samples}.cluster_annotation_sample_barplot.png', namelist=sample_list, inputs_dir=indir)},{generate_param_values('{samples}.cluster_annotation_tsne.png', namelist=sample_list, inputs_dir=indir)},{generate_param_values('{samples}.cluster_annotation_umap.png', namelist=sample_list, inputs_dir=indir)} "
+                f"--groupdiff_statistic_celltype {generate_param_values('cellType_{groups}.statistic', grouplist=group_value, inputs_dir=indir)} "
+                f"--cell_typeanno_pdf {indir}/All.cluster_annotation_cluster_statBar.pdf,{indir}/All.cluster_annotation_heatmap.pdf,{indir}/All.cluster_annotation_sample_barplot.pdf,{indir}/All.cluster_annotation_tsne.pdf,{indir}/All.cluster_annotation_umap.pdf "
+                f"--single_tf_analysis {generate_param_values('{samples}.TFBS_Analysis', namelist=sample_list, inputs_dir=indir)} "
+                f"--backup_data {indir}/Backup_Data "
+                f"--groupdiff_statistic {generate_param_values('{groups}.statistic', grouplist=group_value, inputs_dir=indir)} "
+                f"--cluster_enrichment {indir}/clusterDiff.Anno_enrichment "
+                f"--cell_typeanno {indir}/All.cell_annotation_stat.xls,{indir}/All.cluster_annotation_result.xls,{indir}/All.cluster_annotation_scores.xls "
+                f"--sample_statistic {generate_param_values('{samples}.statistic', namelist=sample_list, inputs_dir=indir)} "
+                f"--single_sample_clusters {generate_param_values('{samples}.clusters.xls', namelist=sample_list, inputs_dir=indir)} "
+                f"--groupdiff_topmarker_celltype {generate_param_values('cellType_{groups}.topmarker', grouplist=group_value, inputs_dir=indir)} "
+                f"--symbollist {indir}/symbol.list "
+                f"--total_seqence_info_stat {indir}/total_seqence_info_stat.xls "
+                f"--cell_filter_stat {indir}/cell_stat_info.xls "
+                f"--fastqc_result {generate_param_values('{samples}_S1_L001_R2_001_fastqc', namelist=sample_list, inputs_dir=indir)} "
+                f"--single_typeannopdf {generate_param_values('{samples}.cluster_annotation_heatmap.pdf', namelist=sample_list, inputs_dir=indir)},{generate_param_values('{samples}.cluster_annotation_sample_barplot.pdf', namelist=sample_list, inputs_dir=indir)},{generate_param_values('{samples}.cluster_annotation_tsne.pdf', namelist=sample_list, inputs_dir=indir)},{generate_param_values('{samples}.cluster_annotation_umap.pdf', namelist=sample_list, inputs_dir=indir)} "
+                f"--single_sample_reduction {generate_param_values('{samples}.reduction', namelist=sample_list, inputs_dir=indir)} "
+                f"--sample_statistic_celltype {generate_param_values('{samples}.statistic_cellType', namelist=sample_list, inputs_dir=indir)} "
+                f"--sample_avgexp_cluster_celltype {generate_param_values('{samples}.drag_file_cellType', namelist=sample_list, inputs_dir=indir)} "
+                f"--single_typeanno {generate_param_values('{samples}.cell_annotation_stat.xls', namelist=sample_list, inputs_dir=indir)},{generate_param_values('{samples}.cluster_annotation_result.xls', namelist=sample_list, inputs_dir=indir)},{generate_param_values('{samples}.cluster_annotation_scores.xls', namelist=sample_list, inputs_dir=indir)} "
+                f"--total_cell_info_stat {indir}/total_cell_info_stat.xls "
+                f"--allcluster_topmarker {indir}/clusterDiff.topmarker "
+                f"--single_sample_ppi {generate_param_values('{samples}.ppi_result', namelist=sample_list, inputs_dir=indir)} "
+                f"--other_anno_database {indir}/OtherAnnoDatabase "
+                f"--groupdiff_volcano_celltype {generate_param_values('cellType_{groups}.volcano', grouplist=group_value, inputs_dir=indir)} "
+                f"--cluster_enrichment_celltype {indir}/cellTypeDiff.Anno_enrichment_cellType "
+                f"--cell_typeanno_png {indir}/All.cluster_annotation_cluster_statBar.png,{indir}/All.cluster_annotation_heatmap.png,{indir}/All.cluster_annotation_sample_barplot.png,{indir}/All.cluster_annotation_tsne.png,{indir}/All.cluster_annotation_umap.png "
+                f"--sample_stat {indir}/AllSample_GC_Q.stat "
+                f"--cluster_ppi {indir}/clusterDiff.ppi_result "
+                f"--cluster_tf_result_celltype {indir}/cellTypeDiff.TFBS_Analysis_cellType "
+                f"--cell_cycle_pic {indir}/All.cellCycle_tsne.pdf,{indir}/All.cellCycle_tsne.png,{indir}/All.cellCycle_umap.pdf,{indir}/All.cellCycle_umap.png "
+                f"--sample_avgexp_cluster {generate_param_values('{samples}.drag_file', namelist=sample_list, inputs_dir=indir)} "
+                f"--single_enrichment {generate_param_values('{samples}.Anno_enrichment', namelist=sample_list, inputs_dir=indir)} "
+            )
+
+            exe_shell_sh = os.path.join(outdir, "exe-shell.sh")
+            with open(exe_shell_sh, "a") as f:
+                f.write(cmd + "\n")
+            print(f"开始分析 {exe_shell_sh}")
+            runOrDie1(exe_shell_sh,output)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    def main(self):
+        step=self.steps
+        step_list=str(step).split(',')
+        if "1" in step_list:
+            self.creat_detail_cfg()
+            self.Phred_Change()
+        if "2" in step_list:
+            self.data_access()
+        if "3" in step_list:
+            self.cellranger()
+        if "4" in step_list:
+            self.dataFilter()
+        if "5" in step_list:
+            self.data_integrated()
+        if "6" in step_list:
+            self.drow_cellcycle()
+        if "7" in step_list:
+            self.integrated_analysis()
+        if "8" in step_list:
+            self.cluster_TF_analysis()
+        if "9" in step_list:
+            self.cluster_ppi()
+        if "10" in step_list:
+            self.cluster_enrichment()
+        if "11" in step_list:
+            self.group_analysis()
+        if "12" in step_list:
+            self.group_analysis_stat()
+        if "13" in step_list:
+            self.group_enrichment()
+        if "14" in step_list:
+            self.CellAnno()
+        if "15" in step_list:
+            self.integrated_analysis_cellType()
+        if "16" in step_list:
+            self.cluster_enrichment_cellType()
+        if "17" in step_list:
+            self.cluster_ppi_cellType()
+        if "18" in step_list:
+            self.cluster_TF_analysis_cellType()
+        if "19" in step_list:
+            self.group_analysis_cellType()
+        if "20" in step_list:
+            self.group_analysis_stat_cellType()
+        if "21" in step_list:
+            self.group_enrichment_cellType()
+        if "22" in step_list:
+            self.singleanalysis()
+        if "23" in step_list:
+            self.singleCellAnno()
+        if "24" in step_list:
+            self.singleanalysis_cellType()
+        if "25" in step_list:
+            self.single_TF_analysis_cellType()
+        if "26" in step_list:
+            self.single_ppi_cellType()
+        if "27" in step_list:
+            self.Anno_enrichment_cellType()
+        if "28" in step_list:
+            self.single_ppi()
+        if "29" in step_list:
+            self.single_TF_analysis()
+        if "30" in step_list:
+            self.Anno_enrichment()
+        if "31" in step_list:
+            self.Backup()
+        if "32" in step_list:
+            self.report()
+
+        if "0" in step_list:
+            self.creat_detail_cfg()
+            self.Phred_Change()
+            self.data_access()
+            self.cellranger()
+            self.dataFilter()
+            self.data_integrated()
+            self.drow_cellcycle()
+            self.integrated_analysis()
+            self.cluster_TF_analysis()
+            self.cluster_ppi()
+            self.cluster_enrichment()
+            self.group_analysis()
+            self.group_analysis_stat()
+            self.group_enrichment()
+            self.CellAnno()
+            self.integrated_analysis_cellType()
+            self.cluster_enrichment_cellType()
+            self.cluster_ppi_cellType()
+            self.cluster_TF_analysis_cellType()
+            self.group_analysis_cellType()
+            self.group_analysis_stat_cellType()
+            self.group_enrichment_cellType()
+            self.singleanalysis()
+            self.singleCellAnno()
+            self.singleanalysis_cellType()
+            self.single_TF_analysis_cellType()
+            self.single_ppi_cellType()
+            self.Anno_enrichment_cellType()
+            self.single_ppi()
+            self.single_TF_analysis()
+            self.Anno_enrichment()
+            self.Backup()
+            self.report()
+
+
+if __name__ == '__main__':
+    args = arg_parse()
+    pipeline = singlecell_pipline(args)
+    pipeline.main()
